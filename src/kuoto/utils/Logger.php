@@ -81,6 +81,17 @@ class Logger
         $this->level = $level;
     }
 
+    /**
+     * Permite a los caminos calientes (un paquete por llamada) saltarse la
+     * construccion del mensaje cuando debug() lo va a descartar igualmente.
+     *
+     * @return bool
+     */
+    public function isDebugEnabled()
+    {
+        return $this->level <= self::LEVEL_DEBUG;
+    }
+
     public function log($level, $message)
     {
         if ($level < $this->level) {

@@ -19,6 +19,18 @@ class HandlerList
     private $handlerSlots = array();
 
     /**
+     * Cache de getListeners(). Se recalcula solo cuando algun HandlerList
+     * (esta o una de sus padres) cambia; ver $version.
+     *
+     * @var RegisteredListener[]|null
+     */
+    private $listenersCache = null;
+    /** @var int version con la que se calculo $listenersCache */
+    private $listenersCacheVersion = -1;
+    /** @var int contador global: sube con cualquier register/unregister/clear */
+    private static $version = 0;
+
+    /**
      * @param string $class
      * @param HandlerList|null $parentList
      */
@@ -49,6 +61,7 @@ class HandlerList
     public function register(RegisteredListener $listener)
     {
         $this->handlerSlots[$listener->getPriority()][] = $listener;
+        self::$version++;
     }
 
     /**
@@ -67,6 +80,7 @@ class HandlerList
             }
             $this->handlerSlots[$priority] = array_values($this->handlerSlots[$priority]);
         }
+        self::$version++;
     }
 
     public function clear()
@@ -74,6 +88,7 @@ class HandlerList
         foreach (EventPriority::ALL as $priority) {
             $this->handlerSlots[$priority] = array();
         }
+        self::$version++;
     }
 
     /**
@@ -95,6 +110,10 @@ class HandlerList
      */
     public function getListeners()
     {
+        if ($this->listenersCacheVersion === self::$version) {
+            return $this->listenersCache;
+        }
+
         $result = array();
         foreach (EventPriority::ALL as $priority) {
             $list = $this;
@@ -105,6 +124,9 @@ class HandlerList
                 $list = $list->getParent();
             }
         }
+
+        $this->listenersCache = $result;
+        $this->listenersCacheVersion = self::$version;
         return $result;
     }
 }
