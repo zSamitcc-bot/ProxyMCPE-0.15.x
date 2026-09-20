@@ -202,7 +202,7 @@ class RakLibProxy
         foreach ($this->sessions as $key => &$sess) {
             if (!empty($sess['waitingForBackend']) && isset($sess['backendWaitStarted'])
                 && ($now - $sess['backendWaitStarted']) > 5) {
-                $this->logger->warning("Backend login response timed out for {$key}, no longer eligible for UUID mapping");
+                //$this->logger->warning("Backend login response timed out for {$key}, no longer eligible for UUID mapping");
                 $sess['waitingForBackend'] = false;
             }
         }
@@ -717,60 +717,72 @@ class RakLibProxy
      * CLIENT_CONNECT (0x09) -> respond with SERVER_HANDSHAKE (0x10)
      */
     private function handleClientConnect($key, &$session, $buffer)
-    {
-        // Decode CLIENT_CONNECT: ID(1) + clientID(8) + sendPing(8) + useSecurity(1) = 18 bytes
-        if (strlen($buffer) < 18) {
-            return;
-        }
-
-        $clientID = $this->unpackLong(substr($buffer, 1, 8));
-        $sendPing = $this->unpackLong(substr($buffer, 9, 8));
-        $useSecurity = ord($buffer[17]) > 0;
-
-        // Build SERVER_HANDSHAKE response
-        // ID(1) + address(7) + short(2) + systemAddresses(10*7) + sendPing(8) + sendPong(8)
-        $reply = chr(self::PKT_SERVER_HANDSHAKE);
-
-        // Client address
-        $parts = explode(".", $session['address']);
-        $reply .= chr(4); // IPv4
-        foreach ($parts as $p) {
-            $reply .= chr((~((int)$p)) & 0xff);
-        }
-        $reply .= pack("n", $session['port']);
-
-        $reply .= pack("n", 0); // Unknown short
-
-        // 10 system addresses
-        $systemAddresses = [
-            ["127.0.0.1", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-            ["0.0.0.0", 0, 4],
-        ];
-        foreach ($systemAddresses as $addr) {
-            $addrParts = explode(".", $addr[0]);
-            $reply .= chr($addr[2]); // version
-            foreach ($addrParts as $p) {
-                $reply .= chr((~((int)$p)) & 0xff);
-            }
-            $reply .= pack("n", $addr[1]);
-        }
-
-        $reply .= $this->packLong($sendPing);
-        $reply .= $this->packLong($sendPing + 1000);
-
-        // Send as encapsulated packet
-        $this->sendEncapsulated($session, $reply, self::UNRELIABLE);
-
-        $this->logger->debug("SERVER_HANDSHAKE enviado a {$session['address']}:{$session['port']} hex=" . bin2hex($reply) . " len=" . strlen($reply));
+{
+    if (strlen($buffer) < 18) {
+        return;
     }
+
+    $clientID = $this->unpackLong(substr($buffer, 1, 8));
+    $sendPing = $this->unpackLong(substr($buffer, 9, 8));
+    $useSecurity = ord($buffer[17]) > 0;
+
+    $reply = chr(self::PKT_SERVER_HANDSHAKE);
+
+    $parts = explode(".", $session['address']);
+
+    $reply .= chr(4);
+
+    foreach ($parts as $p) {
+        $reply .= chr((~((int) $p)) & 0xff);
+    }
+
+    $reply .= pack("n", $session['port']);
+
+    $systemAddresses = array(
+        array("127.0.0.1", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4),
+        array("0.0.0.0", 0, 4)
+    );
+
+    foreach ($systemAddresses as $addr) {
+        $addrParts = explode(".", $addr[0]);
+
+        $reply .= chr($addr[2]);
+
+        foreach ($addrParts as $p) {
+            $reply .= chr((~((int) $p)) & 0xff);
+        }
+
+        $reply .= pack("n", $addr[1]);
+    }
+
+    $reply .= $this->packLong($sendPing);
+    $reply .= $this->packLong($sendPing + 1000);
+
+    $this->sendEncapsulated(
+        $session,
+        $reply,
+        self::UNRELIABLE
+    );
+
+    $this->logger->debug(
+        "SERVER_HANDSHAKE enviado a " .
+        $session['address'] .
+        ":" .
+        $session['port'] .
+        " len=" .
+        strlen($reply) .
+        " hex=" .
+        bin2hex($reply)
+    );
+}
 
     /**
      * CLIENT_HANDSHAKE (0x13) -> mark session as CONNECTED
@@ -997,7 +1009,17 @@ class RakLibProxy
 
     public function transferPlayer($uuid, $targetHash)
 {
-    $uuidHex = bin2hex($uuid);
+    $uuidHex = strtolower(str_replace('-', '', bin2hex($uuid)));
+
+    $target = $this->manager->getServer($targetHash);
+
+    if ($target === null || !$target->isAuthenticated()) {
+        $this->logger->warning(
+            "No se puede trasladar {$uuidHex}: destino {$targetHash} no disponible"
+        );
+
+        return false;
+    }
 
     foreach ($this->sessions as $key => &$session) {
         if ($session['state'] !== self::STATE_CONNECTED) {
@@ -1006,11 +1028,16 @@ class RakLibProxy
 
         $match = false;
 
-        if (isset($session['uuidHex']) && $session['uuidHex'] === $uuidHex) {
+        if (isset($session['uuidHex'])
+            && strtolower($session['uuidHex']) === $uuidHex) {
+
             $match = true;
         }
 
-        if (isset($session['backendUuidHex']) && $session['backendUuidHex'] === $uuidHex) {
+        if (!$match
+            && isset($session['backendUuidHex'])
+            && strtolower($session['backendUuidHex']) === $uuidHex) {
+
             $match = true;
         }
 
@@ -1018,14 +1045,7 @@ class RakLibProxy
             continue;
         }
 
-        $target = $this->manager->getServer($targetHash);
-
-        if ($target === null || !$target->isAuthenticated()) {
-            $this->logger->warning(
-                "No se puede trasladar {$uuidHex}: destino {$targetHash} no disponible"
-            );
-            return false;
-        }
+        $internalUuidHex = $session['uuidHex'];
 
         $oldHash = isset($session['backendHash'])
             ? $session['backendHash']
@@ -1033,69 +1053,55 @@ class RakLibProxy
 
         if ($oldHash === $targetHash) {
             $this->logger->warning(
-                "El jugador {$uuidHex} ya esta conectado a {$targetHash}"
+                "El jugador {$internalUuidHex} ya esta conectado a {$targetHash}"
             );
+
             return false;
         }
 
-        // Pantalla de carga: se manda un ChangeDimensionPacket falso (a una
-        // dimension distinta de la que el jugador tenia registrada) apenas
-        // se confirma el traslado, ANTES de tocar nada del backend nuevo.
-        // Asi el cliente tapa el mundo viejo con la pantalla de "Generando
-        // terreno" durante todo el tiempo que tarda el handshake con el
-        // servidor destino, en vez de quedar viendo el mundo congelado.
         $currentDimension = isset($session['dimension'])
             ? $session['dimension']
             : ChangeDimensionPacket::DIMENSION_NORMAL;
+
         $fakeDimension = $currentDimension === ChangeDimensionPacket::DIMENSION_NETHER
             ? ChangeDimensionPacket::DIMENSION_NORMAL
             : ChangeDimensionPacket::DIMENSION_NETHER;
 
-        $this->sendChangeDimension($session, $fakeDimension);
-        $session['dimension'] = $fakeDimension;
-
-        $this->logger->debug(
-            "Pantalla de carga forzada para {$uuidHex} (dimension falsa {$fakeDimension}) antes de trasladar a {$targetHash}"
+        $this->sendChangeDimension(
+            $session,
+            $fakeDimension
         );
 
-        $playerUuidHex = isset($session['backendUuidHex'])
-            ? $session['backendUuidHex']
-            : $session['uuidHex'];
+        $session['dimension'] = $fakeDimension;
 
-        if ($this->manager->getPlayerInfo($playerUuidHex) !== null) {
-            $this->manager->movePlayer(
-                $playerUuidHex,
-                $targetHash
-            );
-        } else {
+        if ($oldHash !== null) {
+            $oldServer = $this->manager->getServer($oldHash);
+
+            if ($oldServer !== null) {
+                $logout = new PlayerLogoutPacket();
+                $logout->uuid = $session['uuid'];
+                $logout->reason = 'transfer';
+
+                $oldServer->sendPacket($logout);
+
+                $this->logger->info(
+                    "PlayerLogout enviado a {$oldHash} para {$internalUuidHex}"
+                );
+            }
+        }
+
+        $moved = $this->manager->movePlayer(
+            $internalUuidHex,
+            $targetHash
+        );
+
+        if (!$moved) {
             $this->manager->registerPlayer(
-                $playerUuidHex,
+                $internalUuidHex,
                 $targetHash,
                 $session['address'],
                 $session['port']
             );
-        }
-
-        // Avisar al backend VIEJO de que el jugador se fue. Sin esto, el
-        // ServerManager ya sabia que el jugador estaba en el nuevo server
-        // (movePlayer() de arriba), pero el propio proceso PocketMine del
-        // backend viejo nunca se enteraba -- solo se le mandaba
-        // PlayerLogoutPacket cuando el jugador se desconectaba del todo
-        // (ver handlePlayerDisconnect()), nunca cuando era trasladado. Eso
-        // dejaba una sesion fantasma "conectada" para siempre en el server
-        // de origen (inflaba su contador de jugadores y evitaba que el slot
-        // se liberase).
-        if ($oldHash !== null) {
-            $oldServer = $this->manager->getServer($oldHash);
-            if ($oldServer !== null) {
-                $logout = new PlayerLogoutPacket();
-                $logout->uuid = $session['uuid'];
-                $oldServer->sendPacket($logout);
-
-                $this->logger->info(
-                    "PlayerLogout enviado a {$oldHash} para {$uuidHex} (trasladado a {$targetHash})"
-                );
-            }
         }
 
         $session['backendHash'] = $targetHash;
@@ -1116,7 +1122,7 @@ class RakLibProxy
         $target->sendPacket($login);
 
         $this->logger->info(
-            "PlayerLogin reenviado a {$targetHash} para traslado de {$uuidHex}"
+            "PlayerLogin reenviado a {$targetHash} para {$internalUuidHex}"
         );
 
         $transfer = new TransferPacket();
@@ -1126,15 +1132,18 @@ class RakLibProxy
         $target->sendPacket($transfer);
 
         $this->logger->info(
-            "TransferPacket enviado a {$targetHash} para {$uuidHex}"
+            "TransferPacket enviado a {$targetHash} para {$internalUuidHex}"
         );
 
-        if (isset($session['pendingBuffers']) && !empty($session['pendingBuffers'])) {
+        if (isset($session['pendingBuffers'])
+            && !empty($session['pendingBuffers'])) {
+
             foreach ($session['pendingBuffers'] as $buf) {
                 $redirect = new RedirectPacket();
                 $redirect->uuid = $session['uuid'];
                 $redirect->direct = false;
                 $redirect->mcpeBuffer = $buf;
+
                 $target->sendPacket($redirect);
             }
 
@@ -1142,10 +1151,34 @@ class RakLibProxy
         }
 
         $this->logger->info(
-            "Ruta de {$uuidHex} cambiada: {$oldHash} -> {$targetHash}"
+            "Ruta de {$internalUuidHex} cambiada: "
+            . $oldHash . " -> " . $targetHash
         );
 
         return true;
+    }
+
+    $resolved = $this->manager->resolvePlayerUuid($uuidHex);
+
+    if ($resolved !== null) {
+        foreach ($this->sessions as $key => &$session) {
+            if (!isset($session['uuidHex'])) {
+                continue;
+            }
+
+            if (strtolower($session['uuidHex']) !== $resolved) {
+                continue;
+            }
+
+            if ($session['state'] !== self::STATE_CONNECTED) {
+                continue;
+            }
+
+            return $this->transferPlayer(
+                $session['uuid'],
+                $targetHash
+            );
+        }
     }
 
     $this->logger->warning(
@@ -1813,26 +1846,73 @@ return;
      */
     public function handlePlayerLogout($uuid, $reason = '')
 {
-    $uuidHex = bin2hex($uuid);
+    $uuidHex = strtolower(str_replace('-', '', bin2hex($uuid)));
 
-    foreach ($this->sessions as $key => $session) {
-        if (isset($session['uuidHex']) && $session['uuidHex'] === $uuidHex) {
-            if (isset($session['state']) && $session['state'] === self::STATE_CONNECTED) {
-                $message = $reason !== 'xd' ? $reason : 'Has sido expulsado del servidor';
-                $this->sendDisconnect($session, $message);
-            }
+    foreach ($this->sessions as $key => &$session) {
+        $match = false;
 
-            $address = isset($session['address']) ? $session['address'] : 'unknown';
-            $port = isset($session['port']) ? $session['port'] : 'unknown';
+        if (isset($session['uuidHex'])
+            && strtolower($session['uuidHex']) === $uuidHex) {
 
-            unset($this->sessions[$key]);
-
-            $this->logger->info(
-                "Sesion eliminada para {$address}:{$port}" . ($reason !== '' ? " (motivo: {$reason})" : '')
-            );
-
-            return true;
+            $match = true;
         }
+
+        if (!$match
+            && isset($session['backendUuidHex'])
+            && strtolower($session['backendUuidHex']) === $uuidHex) {
+
+            $match = true;
+        }
+
+        if (!$match) {
+            continue;
+        }
+
+        if ($session['state'] === self::STATE_CONNECTED) {
+            $message = $reason !== 'xd'
+                ? $reason
+                : 'Has sido expulsado del servidor';
+
+            $this->sendDisconnect(
+                $session,
+                $message
+            );
+        }
+
+        $internalUuidHex = $session['uuidHex'];
+
+        $this->manager->unregisterPlayer(
+            $internalUuidHex
+        );
+
+        $address = isset($session['address'])
+            ? $session['address']
+            : 'unknown';
+
+        $port = isset($session['port'])
+            ? $session['port']
+            : 'unknown';
+
+        unset($this->sessions[$key]);
+
+        $this->logger->info(
+            "Sesion eliminada para {$address}:{$port}"
+            . ($reason !== ''
+                ? " (motivo: {$reason})"
+                : '')
+        );
+
+        return true;
+    }
+
+    $resolved = $this->manager->resolvePlayerUuid(
+        $uuidHex
+    );
+
+    if ($resolved !== null) {
+        $this->manager->unregisterPlayer(
+            $resolved
+        );
     }
 
     return false;

@@ -28,7 +28,7 @@ class KickCommand extends Command
 		} else {
 			$uuidHex = $this->getManager()->getUuidByName($target);
 			if ($uuidHex === null) {
-				$this->getLogger()->warning("Jugador no encontrado (ni por nombre ni por UUID): {$target}");
+				$this->getLogger()->warning("Jugador no encontrado: {$target}");
 				return false;
 			}
 		}
@@ -41,36 +41,42 @@ class KickCommand extends Command
 
 		$serverHash = $this->getManager()->getPlayerServer($resolvedUuid);
 		if ($serverHash === null) {
-			$this->getLogger()->warning("El jugador {$target} no esta asociado a ningun servidor");
+			$this->getLogger()->warning("El jugador {$target} no esta conectado");
 			return false;
 		}
 
 		$server = $this->getManager()->getServer($serverHash);
 		if ($server === null) {
-			$this->getLogger()->warning("El servidor {$serverHash} ya no esta conectado");
+			$this->getLogger()->warning("El servidor {$serverHash} no esta disponible");
 			return false;
 		}
 
 		$sendUuid = $resolvedUuid;
 		$playerInfo = $this->getManager()->getPlayerInfo($resolvedUuid);
-		if ($playerInfo !== null && isset($playerInfo['backendUuid']) && preg_match('/^[0-9a-fA-F]{32}$/', $playerInfo['backendUuid']) === 1) {
+
+		if ($playerInfo !== null &&
+			isset($playerInfo['backendUuid']) &&
+			preg_match('/^[0-9a-fA-F]{32}$/', $playerInfo['backendUuid']) === 1) {
 			$sendUuid = strtolower($playerInfo['backendUuid']);
 		}
 
 		$binaryUuid = hex2bin($sendUuid);
-		if ($binaryUuid === false || strlen($binaryUuid) !== 16) {
-			$this->getLogger()->warning("UUID invalido para expulsar al jugador {$target}");
+
+		if ($binaryUuid === false || strlen($binaryUuid) !== 10) {
+			$this->getLogger()->warning("UUID invalido para el jugador {$target}");
 			return false;
 		}
 
 		$server->sendPlayerLogout($binaryUuid, $reason);
 		$this->getManager()->unregisterPlayer($resolvedUuid);
+
 		$rakProxy = $this->getManager()->getRakProxy();
+
 		if ($rakProxy !== null) {
 			$rakProxy->handlePlayerLogout($binaryUuid, $reason);
 		}
 
-		$this->getLogger()->info("Jugador {$target} expulsado: {$reason}");
+		$this->getLogger()->info("Jugador {$target} expulsado correctamente");
 		return true;
 	}
 }

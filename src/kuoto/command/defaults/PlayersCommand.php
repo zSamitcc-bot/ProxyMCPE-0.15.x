@@ -4,14 +4,19 @@ namespace kuoto\command\defaults;
 
 use kuoto\command\Command;
 use kuoto\server\SynapseServer;
-use kuoto\utils\ConsoleTable;
 use kuoto\utils\TextFormat;
 
 class PlayersCommand extends Command
 {
     public function __construct(SynapseServer $proxy)
     {
-        parent::__construct($proxy, 'players', 'Lista los jugadores conectados', 'players', array('p'));
+        parent::__construct(
+            $proxy,
+            'players',
+            'Lista los jugadores conectados',
+            'players',
+            array('p')
+        );
     }
 
     public function execute($args)
@@ -19,23 +24,65 @@ class PlayersCommand extends Command
         $players = $this->getManager()->getAllPlayers();
 
         if (empty($players)) {
-            $this->getLogger()->info('No hay jugadores conectados');
+            $this->getLogger()->info(
+                TextFormat::GRAY . 'No hay jugadores conectados.'
+            );
+
             return true;
         }
 
-        $table = new ConsoleTable('JUGADORES CONECTADOS', TextFormat::GREEN);
-        $table->setHeaders(array('UUID', 'Servidor', 'IP:Puerto'), array(20, 22, 22));
+        $reset = TextFormat::RESET;
+        $bold = TextFormat::BOLD;
+        $white = TextFormat::WHITE;
+        $green = TextFormat::GREEN;
+        $gray = TextFormat::GRAY;
+        $yellow = TextFormat::YELLOW;
+
+        echo "\n";
+
+        echo $green . $bold;
+        echo "  Jugadores conectados";
+        echo $gray . " (" . count($players) . ")";
+        echo $reset . "\n\n";
+
+        echo $white . $bold;
+        echo "  " . TextFormat::pad("Jugador", 22);
+        echo TextFormat::pad("Servidor", 24);
+        echo "IP:Puerto";
+        echo $reset . "\n";
+
+        echo "\n";
 
         foreach ($players as $uuid => $info) {
-            $shortUuid = substr($uuid, 0, 8) . '-' . substr($uuid, 8, 4) . '-' . substr($uuid, 12, 4) . '..';
-            $table->addRow(array(
-                TextFormat::WHITE . $shortUuid,
-                TextFormat::GREEN . $info['server'],
-                TextFormat::GRAY . $info['ip'] . ':' . $info['port'],
-            ));
+            $name = isset($info['name']) && $info['name'] !== null
+                ? $info['name']
+                : 'player';
+
+            $server = isset($info['server']) && $info['server'] !== ''
+                ? $info['server']
+                : 'Desconocido';
+
+            $ip = isset($info['ip']) && $info['ip'] !== ''
+                ? $info['ip']
+                : '0.0.0.0';
+
+            $port = isset($info['port']) && $info['port'] > 0
+                ? $info['port']
+                : '0';
+
+            echo "  ";
+            echo $white . TextFormat::pad($name, 22);
+            echo $green . TextFormat::pad($server, 24);
+            echo $gray . $ip . ":" . $port;
+            echo $reset . "\n";
         }
 
-        $table->display();
+        echo "\n";
+
+        $this->getLogger()->info(
+            "Jugadores conectados: " . count($players)
+        );
+
         return true;
     }
 }

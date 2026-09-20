@@ -4,7 +4,6 @@ namespace kuoto\command\defaults;
 
 use kuoto\command\Command;
 use kuoto\server\SynapseServer;
-use kuoto\utils\ConsoleTable;
 use kuoto\utils\TextFormat;
 
 class ListCommand extends Command
@@ -23,20 +22,29 @@ class ListCommand extends Command
             return true;
         }
 
-        $table = new ConsoleTable('SERVIDORES CONECTADOS', TextFormat::GOLD);
-        $table->setHeaders(
-            array('Direccion', 'Tipo', 'Jugadores', 'TPS', 'Estado'),
-            array(22, 4, 10, 5, 8)
-        );
+        echo PHP_EOL;
+        echo '  ' . TextFormat::GOLD . TextFormat::BOLD . 'Servidores conectados (' . count($servers) . ')' . TextFormat::RESET . PHP_EOL;
+        echo PHP_EOL;
+
+        echo '  ' .
+            TextFormat::GRAY . TextFormat::pad('Direccion', 24) .
+            TextFormat::pad('Tipo', 8) .
+            TextFormat::pad('Jugadores', 12) .
+            TextFormat::pad('TPS', 8) .
+            TextFormat::pad('Estado', 10) .
+            TextFormat::RESET . PHP_EOL;
+
+        echo PHP_EOL;
 
         foreach ($servers as $server) {
             $info = $server->getInfo();
 
             $type = $info['isMainServer']
-                ? TextFormat::GREEN . TextFormat::BOLD . 'MAIN'
-                : TextFormat::BLUE . TextFormat::BOLD . 'SUB';
+                ? TextFormat::GREEN . 'MAIN'
+                : TextFormat::BLUE . 'SUB';
 
             $tps = number_format($info['tps'], 1);
+
             if ($info['tps'] >= 18) {
                 $tpsColor = TextFormat::GREEN;
             } elseif ($info['tps'] >= 14) {
@@ -46,19 +54,23 @@ class ListCommand extends Command
             }
 
             $status = $server->isAuthenticated()
-                ? TextFormat::GREEN . TextFormat::BOLD . 'ONLINE'
-                : TextFormat::RED . TextFormat::BOLD . 'OFFLINE';
+                ? TextFormat::GREEN . 'ONLINE'
+                : TextFormat::RED . 'OFFLINE';
 
-            $table->addRow(array(
-                TextFormat::WHITE . $info['hash'],
-                $type,
-                TextFormat::GRAY . $info['playerCount'] . '/' . $info['maxPlayers'],
-                $tpsColor . $tps,
-                $status,
-            ));
+            echo '  ' .
+                TextFormat::WHITE . TextFormat::pad($info['hash'], 24) .
+                TextFormat::pad($type, 8) .
+                TextFormat::GRAY . TextFormat::pad(
+                    $info['playerCount'] . '/' . $info['maxPlayers'],
+                    12
+                ) .
+                TextFormat::pad($tpsColor . $tps, 8) .
+                TextFormat::pad($status, 10) .
+                TextFormat::RESET . PHP_EOL;
         }
 
-        $table->display();
+        echo PHP_EOL;
+
         return true;
     }
 }

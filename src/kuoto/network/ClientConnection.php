@@ -200,7 +200,7 @@ class ClientConnection
 
         if ($data === '') {
             // Empty string means peer closed connection gracefully
-            $this->disconnect('Conexion cerrada por el otro extremo');
+            $this->disconnect("Server Connection: {$this->hash} - Conexion cerrada por el otro extremo");
             return;
         }
 
@@ -287,7 +287,7 @@ class ClientConnection
      */
     private function handleConnect(ConnectPacket $pk)
     {
-        $this->logger->info("Conexion de {$this->hash} - protocolo v{$pk->protocol}");
+        $this->logger->info("Server Connection: {$this->hash} - protocolo v{$pk->protocol}");
 
         $event = new ServerConnectEvent($this, $pk->protocol, $pk->maxPlayers, $pk->isMainServer, $pk->description);
         $event->call();
@@ -318,7 +318,7 @@ class ClientConnection
         $this->serverName = $this->ip . ':' . $this->port;
 
         $typeStr = $this->isMainServer ? 'MAIN' : 'SUB';
-        $this->logger->info("Servidor {$this->hash} autenticado ({$this->description}, {$typeStr}, max={$this->maxPlayers})");
+        $this->logger->info("Server Backend: {$this->hash} autenticado ({$this->description}, {$typeStr}, PlayerMax={$this->maxPlayers})");
 
         $this->sendInformation(InformationPacket::TYPE_LOGIN, InformationPacket::INFO_LOGIN_SUCCESS);
 
@@ -358,47 +358,113 @@ class ClientConnection
      * @param PlayerLoginPacket $pk
      */
     private function handlePlayerLogin(PlayerLoginPacket $pk)
-    {
-        $uuidHex = bin2hex($pk->uuid);
+{
+    $packetUuidHex = strtolower(str_replace('-', '', bin2hex($pk->uuid)));
 
-        $event = new PlayerLoginEvent($pk->uuid, $this, $pk->address, $pk->port, $pk->isFirstTime);
-        $event->call();
-        if ($event->isCancelled()) {
-            $this->logger->info("Login de {$uuidHex} cancelado por un listener");
-            return;
+    $internalUuidHex = $this->manager->resolvePlayerUuid($packetUuidHex);
+
+    if ($internalUuidHex === null) {
+        $rakProxy = $this->manager->getRakProxy();
+
+        if ($rakProxy !== null) {
+            $internalUuidHex = $rakProxy->getSessionUuidHexByBackendUuid(
+                $packetUuidHex
+            );
         }
-
-        $this->players[$uuidHex] = $this->hash;
-
-        $firstStr = $pk->isFirstTime ? 'si' : 'no';
-        $this->logger->info("Jugador {$pk->address}:{$pk->port} entro via {$this->hash} (primeraVez={$firstStr})");
-
-        $this->manager->registerPlayer($uuidHex, $this->hash, $pk->address, $pk->port);
-        $this->manager->forwardToAllExcept($this, $pk);
     }
+
+    if ($internalUuidHex !== null) {
+        $this->manager->movePlayer(
+            $internalUuidHex,
+            $this->hash
+        );
+
+        $this->manager->setBackendUuid(
+            $internalUuidHex,
+            $packetUuidHex
+        );
+    } else {
+        $internalUuidHex = $packetUuidHex;
+
+        $this->manager->registerPlayer(
+            $internalUuidHex,
+            $this->hash,
+            $pk->address,
+            $pk->port
+        );
+    }
+
+    $this->players[$internalUuidHex] = $this->hash;
+
+    $event = new PlayerLoginEvent(
+        $pk->uuid,
+        $this,
+        $pk->address,
+        $pk->port,
+        $pk->isFirstTime
+    );
+
+    $event->call();
+
+    if ($event->isCancelled()) {
+        return;
+    }
+
+    $this->forwardLoginPacket($pk);
+}
 
     /**
      * @param PlayerLogoutPacket $pk
      */
     private function handlePlayerLogout(PlayerLogoutPacket $pk)
-    {
-        $uuidHex = bin2hex($pk->uuid);
-        unset($this->players[$uuidHex]);
+{
+    $uuidHex = strtolower(str_replace('-', '', bin2hex($pk->uuid)));
 
-        $event = new PlayerLogoutEvent($pk->uuid, $this, $pk->reason);
-        $event->call();
+    $resolvedUuid = $this->manager->resolvePlayerUuid($uuidHex);
 
-        $this->logger->info("Jugador {$uuidHex} salio de {$this->hash}: {$pk->reason}");
-
-        $this->manager->unregisterPlayer($uuidHex);
-        $this->manager->forwardToAllExcept($this, $pk);
-
-        // Notify RakLib proxy to remove session
-        $rakProxy = $this->manager->getRakProxy();
-        if ($rakProxy !== null) {
-            $rakProxy->handlePlayerLogout($pk->uuid, $pk->reason);
-        }
+    if ($resolvedUuid === null) {
+        $this->logger->debug(
+            "Logout recibido para jugador no registrado: {$uuidHex}"
+        );
+        return;
     }
+
+    $currentServer = $this->manager->getPlayerServer($resolvedUuid);
+
+    unset($this->players[$uuidHex]);
+
+    if ($currentServer !== $this->hash) {
+        $this->logger->debug(
+            "Logout ignorado: {$resolvedUuid} pertenece actualmente a {$currentServer}, recibido de {$this->hash}"
+        );
+        return;
+    }
+
+    $event = new PlayerLogoutEvent(
+        $pk->uuid,
+        $this,
+        $pk->reason
+    );
+
+    $event->call();
+
+    $this->logger->info(
+        "Jugador {$uuidHex} salió de {$this->hash}"
+    );
+
+    $this->manager->unregisterPlayer($resolvedUuid);
+
+    $this->manager->forwardToAllExcept($this, $pk);
+
+    $rakProxy = $this->manager->getRakProxy();
+
+    if ($rakProxy !== null) {
+        $rakProxy->handlePlayerLogout(
+            $pk->uuid,
+            $pk->reason
+        );
+    }
+}
 
     /**
      * @param RedirectPacket $pk
@@ -422,11 +488,18 @@ class ClientConnection
 {
     $uuidHex = bin2hex($pk->uuid);
 
-    $event = new PlayerTransferEvent($pk->uuid, $this, $pk->clientHash);
+    $event = new PlayerTransferEvent(
+        $pk->uuid,
+        $this,
+        $pk->clientHash
+    );
+
     $event->call();
 
     if ($event->isCancelled()) {
-        $this->logger->info("Traslado de {$uuidHex} cancelado por un listener");
+        $this->logger->info(
+            "Traslado de {$uuidHex} cancelado por un listener"
+        );
         return;
     }
 
@@ -644,4 +717,9 @@ class ClientConnection
 
         $this->logger->info("Servidor {$this->hash} desconectado: {$reason}");
     }
+
+    private function forwardLoginPacket(PlayerLoginPacket $pk)
+{
+    $this->manager->forwardToAllExcept($this, $pk);
+}
 }

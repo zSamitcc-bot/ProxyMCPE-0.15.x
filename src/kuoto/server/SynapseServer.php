@@ -188,8 +188,8 @@ class SynapseServer
             return;
         }
 
-        $this->logger->info("Kuoto Proxy escuchando en {$this->bindIp}:{$this->port}");
-        $this->logger->info("Maximo de servidores: {$this->maxServers}");
+        $this->logger->info("Proxy TCP escuchando en {$this->bindIp}:{$this->port}");
+        $this->logger->info("Server conectado: {$this->maxServers}");
 
         $this->startRakProxy();
         $this->loadPlugins();
@@ -250,7 +250,7 @@ class SynapseServer
         );
 
         if ($this->rakProxy->start()) {
-            $this->logger->info("Proxy RakLib activo en el puerto {$this->rakPort}");
+            $this->logger->info("Proxy UDP activo en el puerto {$this->rakPort}");
             $this->manager->setRakProxy($this->rakProxy);
         } else {
             $this->logger->warning('El proxy RakLib no arranco: los jugadores no podran conectarse');
@@ -270,21 +270,12 @@ class SynapseServer
 
     private function mainLoop()
     {
-        $this->logger->info('Bucle principal iniciado');
+        $this->logger->info('Proxy iniciado, esperando conexiones...');
         $lastBroadcast = microtime(true);
 
         while ($this->running) {
             $start = microtime(true);
 
-            // Todo lo de aqui abajo puede alcanzarse con datos controlados por
-            // el cliente (paquetes malformados, reensamblado de fragmentos...).
-            // Antes de que existiera este try/catch, CUALQUIER \Throwable sin
-            // capturar (los \Error como TypeError o DivisionByZeroError no los
-            // atrapa un "catch (\Exception)") salia de mainLoop() y mataba el
-            // proceso entero en silencio: se caian todos los jugadores y todos
-            // los backends a la vez, sin nada escrito en el log. Capturarlo
-            // aqui convierte esa caida total en un tick perdido y una traza que
-            // si se puede depurar.
             try {
                 $this->acceptConnections();
                 $this->tickConnections();
@@ -303,9 +294,7 @@ class SynapseServer
                     $this->console->tick();
                 }
             } catch (\Throwable $e) {
-                $this->logException($e, 'en el bucle principal');
-                // A proposito NO se relanza: un tick malo no puede tumbar al
-                // resto de jugadores y servidores.
+                $this->logException($e, 'en el hilo principal');
             }
 
             $elapsed = microtime(true) - $start;
@@ -364,7 +353,7 @@ class SynapseServer
 
             $connection = new ClientConnection($client, $this, $this->manager, $this->logger);
             $this->pendingConnections[$connection->getHash()] = $connection;
-            $this->logger->info('Nueva conexion de ' . $connection->getHash() . ' (pendiente de autenticar)');
+            $this->logger->info('Server Connection: ' . $connection->getHash() . ' (pendiente de autenticar)');
         }
     }
 
@@ -383,7 +372,7 @@ class SynapseServer
 
     public function shutdown()
     {
-        $this->logger->info('Apagando Kuoto Proxy...');
+        $this->logger->info('Apagando Proxy...');
 
         try {
             $event = new ProxyShutdownEvent($this);
@@ -413,7 +402,7 @@ class SynapseServer
             $this->console->close();
         }
 
-        $this->logger->info('Kuoto Proxy detenido');
+        $this->logger->info('Proxy detenido');
     }
 
     /**

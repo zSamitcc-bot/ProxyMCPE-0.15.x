@@ -2,437 +2,499 @@
 
 namespace kuoto\server;
 
-use kuoto\utils\Logger;
-use kuoto\network\RakLibProxy;
 use kuoto\network\ClientConnection;
-
+use kuoto\network\RakLibProxy;
+use kuoto\protocol\DataPacket;
 use kuoto\protocol\InformationPacket;
-use kuoto\protocol\RedirectPacket;
-use kuoto\protocol\PlayerLogoutPacket;
 
 class ServerManager
 {
-    /** @var ClientConnection[] hash => connection */
     private $servers = array();
-
-    /** @var array uuidHex => array{server, ip, port} */
     private $players = array();
-
-    /** @var array nombre en minuscula => uuidHex (interno del proxy) */
     private $nameToUuid = array();
-
     private $backendUuidToUuid = array();
-
-    /** @var Logger */
     private $logger;
-
-    /** @var RakLibProxy|null */
     private $rakProxy = null;
 
-    /**
-     * @param Logger $logger
-     */
-    public function __construct(Logger $logger)
+    public function __construct($logger)
     {
         $this->logger = $logger;
     }
 
-    /**
-     * Set RakLib proxy reference for forwarding player data
-     * @param RakLibProxy $rakProxy
-     */
     public function setRakProxy(RakLibProxy $rakProxy)
     {
         $this->rakProxy = $rakProxy;
     }
 
-    /**
-     * Get RakLib proxy
-     * @return RakLibProxy|null
-     */
     public function getRakProxy()
     {
         return $this->rakProxy;
     }
 
-    // --- Server Management ---
+    private function normalizeUuid($uuidHex)
+    {
+        return strtolower(str_replace('-', '', $uuidHex));
+    }
 
-    /**
-     * @param ClientConnection $server
-     */
     public function registerServer(ClientConnection $server)
     {
         $this->servers[$server->getHash()] = $server;
-        $this->logger->debug("Server registered: " . $server->getHash() . " (total: " . count($this->servers) . ")");
     }
 
-    /**
-     * @param ClientConnection $server
-     */
-    public function unregisterServer(ClientConnection $server)
-    {
-        unset($this->servers[$server->getHash()]);
-        $this->logger->debug("Server unregistered: " . $server->getHash() . " (total: " . count($this->servers) . ")");
+    public function unregisterServer($hash)
+{
+    if ($hash instanceof ClientConnection) {
+        $hash = $hash->getHash();
     }
 
-    /**
-     * @param string $hash
-     * @return ClientConnection|null
-     */
+    if (!is_string($hash)) {
+        return false;
+    }
+
+    unset($this->servers[$hash]);
+
+    return true;
+}
+
     public function getServer($hash)
     {
-        return isset($this->servers[$hash]) ? $this->servers[$hash] : null;
+        return isset($this->servers[$hash])
+            ? $this->servers[$hash]
+            : null;
     }
 
-    /**
-     * @return ClientConnection[]
-     */
     public function getServers()
     {
         return $this->servers;
     }
 
-    /**
-     * @return int
-     */
+    public function getAuthenticatedServers()
+    {
+        $result = array();
+
+        foreach ($this->servers as $hash => $server) {
+            if ($server->isAuthenticated()) {
+                $result[$hash] = $server;
+            }
+        }
+
+        return $result;
+    }
+
     public function getServerCount()
     {
         return count($this->servers);
     }
 
-    /**
-     * @return ClientConnection[]
-     */
-    public function getAuthenticatedServers()
+    public function getAuthenticatedServerCount()
     {
-        $result = array();
-        foreach ($this->servers as $server) {
-            if ($server->isAuthenticated()) {
-                $result[] = $server;
+        return count($this->getAuthenticatedServers());
+    }
+
+    public function registerPlayer($uuidHex, $serverHash, $ip = '', $port = 0)
+    {
+        $uuidHex = $this->normalizeUuid($uuidHex);
+
+        if (isset($this->backendUuidToUuid[$uuidHex])) {
+            $mapped = $this->backendUuidToUuid[$uuidHex];
+
+            if (isset($this->players[$mapped])) {
+                $uuidHex = $mapped;
             }
         }
-        return $result;
-    }
 
-    // --- Player Management ---
+        if (isset($this->players[$uuidHex])) {
+            $this->players[$uuidHex]['server'] = $serverHash;
 
-    /**
-     * @param string $uuidHex
-     * @param string $serverHash
-     * @param string $ip
-     * @param int $port
-     */
-    public function registerPlayer($uuidHex, $serverHash, $ip, $port)
-    {
+            if ($ip !== '') {
+                $this->players[$uuidHex]['ip'] = $ip;
+            }
+
+            if ($port > 0) {
+                $this->players[$uuidHex]['port'] = $port;
+            }
+
+            return $uuidHex;
+        }
+
         $this->players[$uuidHex] = array(
             'server' => $serverHash,
-            'ip'     => $ip,
-            'port'   => $port,
+            'ip' => $ip,
+            'port' => $port,
+            'backendUuid' => null,
+            'name' => null
         );
-        $this->logger->debug("Player {$uuidHex} registered on server {$serverHash}");
-    }
 
-    public function movePlayer($uuidHex, $serverHash)
-{
-    if (!isset($this->players[$uuidHex])) {
-        return false;
-    }
-
-    $oldHash = $this->players[$uuidHex]['server'];
-
-    $this->players[$uuidHex]['server'] = $serverHash;
-
-    $this->logger->debug(
-        "Player {$uuidHex} moved from {$oldHash} to {$serverHash}"
-    );
-
-    return true;
-}
-
-public function updatePlayerUuid($oldUuidHex, $newUuidHex)
-{
-    if (!isset($this->players[$oldUuidHex])) {
-        return false;
-    }
-
-    $this->players[$newUuidHex] = $this->players[$oldUuidHex];
-
-    unset($this->players[$oldUuidHex]);
-
-    $this->logger->debug(
-        "Player UUID cambiado {$oldUuidHex} -> {$newUuidHex}"
-    );
-
-    return true;
-}
-
-    public function setBackendUuid($uuidHex, $backendUuidHex)
-{
-    $uuidHex = strtolower(str_replace('-', '', $uuidHex));
-    $backendUuidHex = strtolower(str_replace('-', '', $backendUuidHex));
-
-    if (!isset($this->players[$uuidHex])) {
-        return false;
-    }
-
-    $this->players[$uuidHex]['backendUuid'] = $backendUuidHex;
-    $this->backendUuidToUuid[$backendUuidHex] = $uuidHex;
-
-    return true;
-}
-
-public function resolvePlayerUuid($uuidHex)
-{
-    $uuidHex = strtolower(str_replace('-', '', $uuidHex));
-
-    if (isset($this->players[$uuidHex])) {
         return $uuidHex;
     }
 
-    if (isset($this->backendUuidToUuid[$uuidHex])) {
-        return $this->backendUuidToUuid[$uuidHex];
+    public function movePlayer($uuidHex, $serverHash)
+    {
+        $uuidHex = $this->normalizeUuid($uuidHex);
+
+        $resolved = $this->resolvePlayerUuid($uuidHex);
+
+        if ($resolved !== null) {
+            $uuidHex = $resolved;
+        }
+
+        if (!isset($this->players[$uuidHex])) {
+            return false;
+        }
+
+        $this->players[$uuidHex]['server'] = $serverHash;
+
+        return true;
     }
 
-    return null;
-}
+    public function updatePlayerUuid($oldUuidHex, $newUuidHex)
+    {
+        $oldUuidHex = $this->normalizeUuid($oldUuidHex);
+        $newUuidHex = $this->normalizeUuid($newUuidHex);
 
-    /**
-     * @param string $uuidHex
-     */
+        if (!isset($this->players[$oldUuidHex])) {
+            return false;
+        }
+
+        if ($oldUuidHex === $newUuidHex) {
+            return true;
+        }
+
+        $info = $this->players[$oldUuidHex];
+
+        unset($this->players[$oldUuidHex]);
+
+        $this->players[$newUuidHex] = $info;
+
+        if ($info['backendUuid'] !== null) {
+            $backendUuid = $this->normalizeUuid($info['backendUuid']);
+            $this->backendUuidToUuid[$backendUuid] = $newUuidHex;
+        }
+
+        foreach ($this->nameToUuid as $name => $uuid) {
+            if ($this->normalizeUuid($uuid) === $oldUuidHex) {
+                $this->nameToUuid[$name] = $newUuidHex;
+            }
+        }
+
+        return true;
+    }
+
+    public function setBackendUuid($uuidHex, $backendUuidHex)
+    {
+        $uuidHex = $this->normalizeUuid($uuidHex);
+        $backendUuidHex = $this->normalizeUuid($backendUuidHex);
+
+        $resolved = $this->resolvePlayerUuid($uuidHex);
+
+        if ($resolved !== null) {
+            $uuidHex = $resolved;
+        }
+
+        if (!isset($this->players[$uuidHex])) {
+            return false;
+        }
+
+        if (isset($this->players[$uuidHex]['backendUuid'])) {
+            $oldBackend = $this->normalizeUuid(
+                $this->players[$uuidHex]['backendUuid']
+            );
+
+            if ($oldBackend !== $backendUuidHex) {
+                unset($this->backendUuidToUuid[$oldBackend]);
+            }
+        }
+
+        if (isset($this->backendUuidToUuid[$backendUuidHex])) {
+            $oldInternal = $this->backendUuidToUuid[$backendUuidHex];
+
+            if ($oldInternal !== $uuidHex && isset($this->players[$oldInternal])) {
+                if (isset($this->players[$oldInternal]['backendUuid'])) {
+                    unset(
+                        $this->backendUuidToUuid[
+                            $this->normalizeUuid(
+                                $this->players[$oldInternal]['backendUuid']
+                            )
+                        ]
+                    );
+                }
+
+                $this->players[$oldInternal]['backendUuid'] = null;
+            }
+        }
+
+        $this->players[$uuidHex]['backendUuid'] = $backendUuidHex;
+        $this->backendUuidToUuid[$backendUuidHex] = $uuidHex;
+
+        return true;
+    }
+
+    public function resolvePlayerUuid($uuidHex)
+    {
+        $uuidHex = $this->normalizeUuid($uuidHex);
+
+        if (isset($this->players[$uuidHex])) {
+            return $uuidHex;
+        }
+
+        if (isset($this->backendUuidToUuid[$uuidHex])) {
+            $internal = $this->backendUuidToUuid[$uuidHex];
+
+            if (isset($this->players[$internal])) {
+                return $internal;
+            }
+
+            unset($this->backendUuidToUuid[$uuidHex]);
+        }
+
+        return null;
+    }
+
     public function unregisterPlayer($uuidHex)
     {
-        if (isset($this->players[$uuidHex]['name'])) {
-            $nameKey = strtolower($this->players[$uuidHex]['name']);
-            if (isset($this->nameToUuid[$nameKey]) && $this->nameToUuid[$nameKey] === $uuidHex) {
-                unset($this->nameToUuid[$nameKey]);
+        $uuidHex = $this->normalizeUuid($uuidHex);
+
+        $resolved = $this->resolvePlayerUuid($uuidHex);
+
+        if ($resolved !== null) {
+            $uuidHex = $resolved;
+        }
+
+        if (!isset($this->players[$uuidHex])) {
+            unset($this->nameToUuid[$uuidHex]);
+            unset($this->backendUuidToUuid[$uuidHex]);
+            return false;
+        }
+
+        if (isset($this->players[$uuidHex]['name'])
+            && $this->players[$uuidHex]['name'] !== null) {
+
+            $name = strtolower($this->players[$uuidHex]['name']);
+
+            if (isset($this->nameToUuid[$name])
+                && $this->normalizeUuid($this->nameToUuid[$name]) === $uuidHex) {
+
+                unset($this->nameToUuid[$name]);
             }
         }
+
+        if (isset($this->players[$uuidHex]['backendUuid'])
+            && $this->players[$uuidHex]['backendUuid'] !== null) {
+
+            $backendUuid = $this->normalizeUuid(
+                $this->players[$uuidHex]['backendUuid']
+            );
+
+            if (isset($this->backendUuidToUuid[$backendUuid])
+                && $this->backendUuidToUuid[$backendUuid] === $uuidHex) {
+
+                unset($this->backendUuidToUuid[$backendUuid]);
+            }
+        }
+
+        unset($this->backendUuidToUuid[$uuidHex]);
         unset($this->players[$uuidHex]);
-        $this->logger->debug("Player {$uuidHex} unregistered");
+
+        return true;
     }
 
-    /**
-     * @param string $uuidHex
-     * @return string|null
-     */
+    public function unregisterPlayersOnServer($serverHash)
+    {
+        $remove = array();
+
+        foreach ($this->players as $uuidHex => $info) {
+            if ($info['server'] === $serverHash) {
+                $remove[] = $uuidHex;
+            }
+        }
+
+        foreach ($remove as $uuidHex) {
+            $this->unregisterPlayer($uuidHex);
+        }
+    }
+
     public function getPlayerServer($uuidHex)
     {
-        return isset($this->players[$uuidHex]['server']) ? $this->players[$uuidHex]['server'] : null;
-    }
+        $uuidHex = $this->resolvePlayerUuid($uuidHex);
 
-    /**
-     * @param string $uuidHex
-     * @return array|null
-     */
-    public function getPlayerInfo($uuidHex)
-    {
-        return isset($this->players[$uuidHex]) ? $this->players[$uuidHex] : null;
-    }
-
-    /**
-     * Asocia un nombre de jugador (aprendido al fisgonear un
-     * FastPlayerListPacket que pasa por el proxy) al UUID interno de su
-     * sesion. Se usa para poder resolver /kick <nombre> ademas de
-     * /kick <uuid>.
-     *
-     * @param string $uuidHex
-     * @param string $name
-     */
-    public function setPlayerName($uuidHex, $name)
-    {
-        if ($name === '' || !isset($this->players[$uuidHex])) {
-            return;
+        if ($uuidHex === null) {
+            return null;
         }
 
-        $oldName = isset($this->players[$uuidHex]['name']) ? $this->players[$uuidHex]['name'] : null;
-        if ($oldName !== null && $oldName !== $name) {
-            $oldKey = strtolower($oldName);
-            if (isset($this->nameToUuid[$oldKey]) && $this->nameToUuid[$oldKey] === $uuidHex) {
-                unset($this->nameToUuid[$oldKey]);
-            }
+        return isset($this->players[$uuidHex]['server'])
+            ? $this->players[$uuidHex]['server']
+            : null;
+    }
+
+    public function getPlayerInfo($uuidHex)
+    {
+        $uuidHex = $this->resolvePlayerUuid($uuidHex);
+
+        if ($uuidHex === null) {
+            return null;
+        }
+
+        return isset($this->players[$uuidHex])
+            ? $this->players[$uuidHex]
+            : null;
+    }
+
+    public function setPlayerName($uuidHex, $name)
+    {
+        $uuidHex = $this->resolvePlayerUuid($uuidHex);
+
+        if ($uuidHex === null) {
+            return false;
+        }
+
+        $oldName = isset($this->players[$uuidHex]['name'])
+            ? $this->players[$uuidHex]['name']
+            : null;
+
+        if ($oldName !== null) {
+            unset($this->nameToUuid[strtolower($oldName)]);
         }
 
         $this->players[$uuidHex]['name'] = $name;
         $this->nameToUuid[strtolower($name)] = $uuidHex;
+
+        return true;
     }
 
-    /**
-     * @param string $uuidHex
-     * @return string|null
-     */
     public function getPlayerName($uuidHex)
     {
-        return isset($this->players[$uuidHex]['name']) ? $this->players[$uuidHex]['name'] : null;
+        $uuidHex = $this->resolvePlayerUuid($uuidHex);
+
+        if ($uuidHex === null) {
+            return null;
+        }
+
+        return isset($this->players[$uuidHex]['name'])
+            ? $this->players[$uuidHex]['name']
+            : null;
     }
 
-    /**
-     * Busca el UUID interno del proxy a partir de un nombre de jugador
-     * (case-insensitive).
-     *
-     * @param string $name
-     * @return string|null
-     */
     public function getUuidByName($name)
     {
-        $key = strtolower($name);
-        return isset($this->nameToUuid[$key]) ? $this->nameToUuid[$key] : null;
+        $name = strtolower($name);
+
+        if (!isset($this->nameToUuid[$name])) {
+            return null;
+        }
+
+        $uuid = $this->normalizeUuid($this->nameToUuid[$name]);
+
+        if (!isset($this->players[$uuid])) {
+            unset($this->nameToUuid[$name]);
+            return null;
+        }
+
+        return $uuid;
     }
 
-    /**
-     * @return int
-     */
     public function getPlayerCount()
     {
         return count($this->players);
     }
 
-    /**
-     * @return array
-     */
-    public function getAllPlayers()
-    {
-        return $this->players;
-    }
-
-    /**
-     * Jugadores actualmente registrados en un backend concreto.
-     *
-     * ClientConnection::$players nunca se llena (ver handlePlayerLogin),
-     * asi que este mapa es la unica fuente real de "quien esta en que
-     * servidor" para cosas como el contador de /list.
-     *
-     * @param string $serverHash
-     * @return array uuidHex => array{server, ip, port}
-     */
     public function getPlayersOnServer($serverHash)
     {
         $result = array();
+
         foreach ($this->players as $uuidHex => $info) {
             if ($info['server'] === $serverHash) {
                 $result[$uuidHex] = $info;
             }
         }
+
         return $result;
     }
 
-    /**
-     * @param string $serverHash
-     * @return int
-     */
-    public function getPlayerCountForServer($serverHash)
+    public function getAllPlayers()
     {
-        return count($this->getPlayersOnServer($serverHash));
+        return $this->players;
     }
 
-    /**
-     * Quita del mapa a todos los jugadores que estaban en un servidor.
-     * Se usa cuando ese backend se desconecta, para que no queden
-     * jugadores "fantasma" apuntando a un servidor que ya no existe.
-     *
-     * @param string $serverHash
-     */
-    public function unregisterPlayersOnServer($serverHash)
+    public function forwardToAllExcept(ClientConnection $except, DataPacket $packet)
     {
-        foreach ($this->players as $uuidHex => $info) {
-            if ($info['server'] === $serverHash) {
-                unset($this->players[$uuidHex]);
-            }
-        }
-    }
-
-    // --- Forwarding ---
-
-    /**
-     * Forward raw packet to all authenticated servers except sender
-     *
-     * @param ClientConnection $except
-     * @param \kuoto\protocol\DataPacket $pk
-     */
-    public function forwardToAllExcept(ClientConnection $except, $pk)
-    {
-        $pk->encode();
-        $buffer = $pk->getBuffer();
-
         foreach ($this->servers as $server) {
-            if ($server !== $except && $server->isAuthenticated()) {
-                $server->sendRawPacket($buffer);
+            if ($server === $except) {
+                continue;
             }
+
+            if (!$server->isAuthenticated()) {
+                continue;
+            }
+
+            $server->sendPacket($packet);
         }
     }
 
-    /**
-     * Forward raw packet to all authenticated servers
-     *
-     * @param \kuoto\protocol\DataPacket $pk
-     */
-    public function forwardToAll($pk)
+    public function forwardToAll(DataPacket $packet)
     {
-        $pk->encode();
-        $buffer = $pk->getBuffer();
-
         foreach ($this->servers as $server) {
-            if ($server->isAuthenticated()) {
-                $server->sendRawPacket($buffer);
+            if (!$server->isAuthenticated()) {
+                continue;
             }
+
+            $server->sendPacket($packet);
         }
     }
 
-    /**
-     * Send client list to a specific server
-     *
-     * @param ClientConnection $target
-     */
     public function sendClientList(ClientConnection $target)
-    {
-        $clientList = array();
-        foreach ($this->servers as $server) {
-            if ($server->isAuthenticated() && $server !== $target) {
-                $info = $server->getInfo();
-                $clientList[$server->getHash()] = array(
-                    'ip'          => $info['ip'],
-                    'port'        => $info['port'],
-                    'playerCount' => $info['playerCount'],
-                    'maxPlayers'  => $info['maxPlayers'],
-                    'description' => $info['description'],
-                    'tps'         => $info['tps'],
-                    'load'        => $info['load'],
-                );
-            }
+{
+    $clientList = array();
+
+    foreach ($this->servers as $server) {
+        if ($server->isAuthenticated() && $server !== $target) {
+            $info = $server->getInfo();
+
+            $clientList[$server->getHash()] = array(
+                'ip'          => $info['ip'],
+                'port'        => $info['port'],
+                'playerCount' => $info['playerCount'],
+                'maxPlayers'  => $info['maxPlayers'],
+                'description' => $info['description'],
+                'tps'         => $info['tps'],
+                'load'        => $info['load'],
+            );
         }
-
-        $pk = new InformationPacket();
-        $pk->type = InformationPacket::TYPE_CLIENT_DATA;
-        $pk->message = json_encode(array('clientList' => $clientList));
-        $target->sendPacket($pk);
-
-        $this->logger->debug("Sent client list to " . $target->getHash() . " (" . count($clientList) . " servers)");
     }
 
-    /**
-     * Broadcast client list to all servers
-     */
+    $pk = new InformationPacket();
+    $pk->type = InformationPacket::TYPE_CLIENT_DATA;
+    $pk->message = json_encode(array(
+        'clientList' => $clientList
+    ));
+
+    $target->sendPacket($pk);
+
+    $this->logger->debug(
+        "Sent client list to " .
+        $target->getHash() .
+        " (" .
+        count($clientList) .
+        " servers)"
+    );
+}
+
     public function broadcastClientList()
-    {
-        foreach ($this->getAuthenticatedServers() as $server) {
-            $this->sendClientList($server);
+{
+    foreach ($this->servers as $server) {
+        if (!$server->isAuthenticated()) {
+            continue;
         }
-    }
 
-    /**
-     * @return array
-     */
+        $this->sendClientList($server);
+    }
+}
+
     public function getStats()
     {
-        $servers = array();
-        foreach ($this->servers as $server) {
-            $servers[] = $server->getInfo();
-        }
-
         return array(
-            'totalServers'         => count($this->servers),
-            'authenticatedServers' => count($this->getAuthenticatedServers()),
-            'totalPlayers'         => count($this->players),
-            'servers'              => $servers,
+            'servers' => count($this->servers),
+            'authenticated' => $this->getAuthenticatedServerCount(),
+            'players' => count($this->players)
         );
     }
 }
