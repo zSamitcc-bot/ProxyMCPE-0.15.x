@@ -2,13 +2,6 @@
 
 namespace kuoto\utils;
 
-/**
- * Codigos ANSI centralizados.
- *
- * Antes cada clase que imprimia algo redeclaraba sus propias variables
- * ($aqua, $darkGray, ...) o metia los escapes a pelo dentro de las cadenas
- * ("\033[0;96m"), lo que hacia imposible cambiar la paleta en un solo sitio.
- */
 abstract class TextFormat
 {
     const RESET        = "\033[0m";
@@ -33,13 +26,10 @@ abstract class TextFormat
     const YELLOW       = "\033[0;93m";
     const WHITE        = "\033[0;97m";
 
-    /** Borra la linea actual y deja el cursor al principio. */
+    
     const CLEAR_LINE   = "\r\033[K";
 
     /**
-     * Quita todos los codigos ANSI de una cadena. Necesario para medir el
-     * ancho real de una celda al pintar tablas.
-     *
      * @param string $text
      * @return string
      */
@@ -49,8 +39,6 @@ abstract class TextFormat
     }
 
     /**
-     * Longitud visible (sin contar los codigos de color).
-     *
      * @param string $text
      * @return int
      */
@@ -60,8 +48,6 @@ abstract class TextFormat
     }
 
     /**
-     * Rellena a la derecha teniendo en cuenta los codigos de color.
-     *
      * @param string $text
      * @param int $length
      * @param string $pad
@@ -73,9 +59,6 @@ abstract class TextFormat
         return $missing > 0 ? $text . str_repeat($pad, $missing) : $text;
     }
 
-    /**
-     * Activa el soporte de colores ANSI en la consola de Windows.
-     */
     public static function enableWindowsColors()
     {
         if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {

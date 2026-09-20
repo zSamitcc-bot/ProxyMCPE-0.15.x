@@ -1,19 +1,5 @@
 <?php
 
-/**
- * Kuoto Proxy - Central Proxy for Minecraft PE
- *
- * PHP 7.0+ compatible
- * Run: php server.php
- *
- * Estructura de carpetas/namespaces al estilo de la API de PocketMine-MP:
- *   src/kuoto/server/    -> kuoto\server    (SynapseServer, ServerManager)
- *   src/kuoto/network/   -> kuoto\network   (RakLibProxy, ClientConnection)
- *   src/kuoto/console/   -> kuoto\console   (Console)
- *   src/kuoto/utils/     -> kuoto\utils     (Logger)
- *   src/kuoto/protocol/  -> kuoto\protocol  (paquetes: HeartbeatPacket, PlayerLoginPacket, etc.)
- */
-
 use kuoto\server\SynapseServer;
 
 define('BASE_PATH', __DIR__);
@@ -26,7 +12,6 @@ if (!file_exists($configPath)) {
     exit(1);
 }
 
-// Parse server.properties format (key=value)
 $lines = file($configPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 $raw = array();
 foreach ($lines as $line) {
@@ -43,7 +28,6 @@ foreach ($lines as $line) {
     $raw[$key] = $value;
 }
 
-// Convert flat properties to nested config array
 $config = array(
     'server' => array(
         'bind-ip'      => isset($raw['server.bind-ip']) ? $raw['server.bind-ip'] : '0.0.0.0',
@@ -68,7 +52,6 @@ $config = array(
     ),
 );
 
-// Check required extensions
 $required = array('sockets', 'json');
 $missing = array();
 foreach ($required as $ext) {

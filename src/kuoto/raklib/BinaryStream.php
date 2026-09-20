@@ -2,14 +2,6 @@
 
 namespace kuoto\raklib;
 
-/**
- * Envoltorio con estado (buffer + offset) sobre Binary. Es la misma idea que
- * raklib\utils\BinaryStream / pocketmine\utils\BinaryStream: en vez de andar
- * pasando ($data, $offset) a todas las funciones estaticas, el stream lleva
- * su propio cursor y comprueba que no se lea mas alla del buffer.
- *
- * kuoto\protocol\DataPacket extiende esta clase.
- */
 class BinaryStream
 {
     /** @var string */

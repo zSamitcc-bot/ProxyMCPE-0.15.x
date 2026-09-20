@@ -2,20 +2,6 @@
 
 namespace kuoto\raklib;
 
-/**
- * Helpers binarios estilo raklib/pocketmine.
- *
- * Antes esta logica estaba duplicada y con bugs en dos sitios distintos:
- *  - kuoto\protocol\DataPacket (putLong/getLong hacian el split de 64 bits a
- *    mano y sin comprobar limites del buffer)
- *  - kuoto\network\RakLibProxy (seccion "BINARY HELPERS": packLong/unpackLong
- *    y readLTriad/writeLTriad), donde packLong() ni siquiera enmascaraba la
- *    mitad alta antes de meterla en pack('N', ...).
- *
- * Todo eso vive ahora aqui, en un solo sitio, usando los formatos nativos de
- * 64 bits de PHP (J/P), que existen desde PHP 5.6.3 y evitan por completo el
- * shifting manual (y sus bugs).
- */
 class Binary
 {
     /**

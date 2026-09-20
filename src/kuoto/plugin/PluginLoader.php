@@ -7,16 +7,6 @@ use kuoto\event\Listener;
 use kuoto\server\SynapseServer;
 use kuoto\utils\Logger;
 
-/**
- * Cargador minimo de extensiones.
- *
- * Todo archivo .php dentro de la carpeta plugins/ se incluye al arrancar; las
- * clases que implementen Listener se instancian y se registran en el
- * EventManager automaticamente.
- *
- * Si la clase declara un constructor, se le pasa el SynapseServer, de modo que
- * un plugin puede acceder al manager, al logger o a la consola.
- */
 class PluginLoader
 {
     /** @var SynapseServer */

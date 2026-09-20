@@ -13,14 +13,6 @@ use kuoto\plugin\PluginLoader;
 use kuoto\utils\Logger;
 use kuoto\utils\TextFormat;
 
-/**
- * Nucleo del proxy: sockets, tick loop y ciclo de vida.
- *
- * Esta clase contenia ademas una consola completa y una copia literal de todos
- * los comandos (help/list/players/stats/kick/say/stop) con su pintado ANSI a
- * mano. Todo eso vive ahora en kuoto\console y kuoto\command, de modo que aqui
- * solo queda lo que de verdad es "el servidor".
- */
 class SynapseServer
 {
     /** @var string */

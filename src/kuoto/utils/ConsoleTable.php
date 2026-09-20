@@ -2,14 +2,6 @@
 
 namespace kuoto\utils;
 
-/**
- * Dibuja las tablas con marco de la consola.
- *
- * Antes cada comando calculaba a mano sus separadores y su relleno con
- * str_repeat()/str_pad(), y como el relleno contaba tambien los bytes de los
- * codigos ANSI, las columnas se descuadraban en cuanto una celda tenia color.
- * Aqui el ancho se mide siempre sobre el texto limpio.
- */
 class ConsoleTable
 {
     /** @var string */
