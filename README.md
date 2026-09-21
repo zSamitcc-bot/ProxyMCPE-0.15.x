@@ -72,7 +72,7 @@ logging.file=kuoto.log
 ## Uso
 
 ```bash
-php server.php
+php PocketMine-MP.phar
 ```
 
 O, en Windows, ejecutando `start.cmd`.
