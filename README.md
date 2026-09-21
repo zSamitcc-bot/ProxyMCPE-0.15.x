@@ -80,7 +80,3 @@ O, en Windows, ejecutando `start.cmd`.
 ## Plugins
 
 Kuoto puede cargar plugins PHP colocados en la carpeta `plugins/`. Un plugin implementa la interfaz `kuoto\event\Listener` y se registra en el `EventManager` para reaccionar a eventos del proxy (conexión de jugadores, selección de servidor, etc.). Ver [`plugins/README.md`](plugins/README.md) para un ejemplo.
-
-## Licencia
-
-Añade aquí la licencia bajo la que se distribuye este proyecto.
