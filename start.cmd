@@ -4,7 +4,7 @@ title Kuoto Proxy
 set "PHP_BIN=%~dp0bin\php\php.exe"
 set "MINTTY=%~dp0bin\mintty.exe"
 set "ICON=%~dp0bin\pocketmine.ico"
-set "SERVER_FILE=%~dp0server.php"
+set "SERVER_FILE=%~dp0PocketMine-MP.phar"
 
 if not exist "%PHP_BIN%" (
     echo [ERROR] PHP not found at: %PHP_BIN%
