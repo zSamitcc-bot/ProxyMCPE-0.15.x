@@ -38,8 +38,15 @@ class Console
             return;
         }
 
-        $this->reader = new ThreadedConsole();
-        $this->reader->start();
+        $this->reader = $this->createReader($this->mode);
+
+        if ($this->reader === null) {
+            $this->logger->warning(
+                'No se pudo iniciar ningun lector de consola; '
+                . 'la consola interactiva queda desactivada.'
+            );
+            return;
+        }
 
         $this->logger->setPromptCallback(
             array($this, 'writePrompt')
@@ -50,6 +57,77 @@ class Console
         $this->writePrompt();
     }
 
+    /**
+     * Elige e inicializa un ConsoleReader segun el modo pedido.
+     *
+     * "threaded" (\Thread/pthreads) es el mas liviano para el tick loop
+     * porque lee en un hilo aparte, pero requiere la extension pthreads --
+     * ausente en muchos entornos de hosting (Pterodactyl incluido), donde
+     * ni siquiera se puede REQUERIR el archivo ThreadedConsole.php sin que
+     * PHP tire un Fatal Error al no encontrar la clase padre \Thread. Por
+     * eso el chequeo de extension_loaded() va ANTES de tocar esa clase, y
+     * el intento de instanciarla igual queda blindado con try/catch: desde
+     * PHP 7 esa falta de clase se lanza como \Error, que es capturable.
+     *
+     * En modo "auto" se prueba threaded (si esta disponible) y se cae a
+     * stdin y despues a process; en un modo explicito solo se prueba ese
+     * lector y, si falla, se registra el motivo sin intentar otro.
+     */
+    private function createReader($mode)
+    {
+        $tryThreaded = $mode === 'auto' || $mode === 'threaded';
+        $tryStdin = $mode === 'auto' || $mode === 'stdin';
+        $tryProcess = $mode === 'auto' || $mode === 'process';
+
+        if ($tryThreaded) {
+            if (extension_loaded('pthreads')) {
+                try {
+                    $threaded = new ThreadedConsole();
+                    $threaded->start();
+                    return $threaded;
+                } catch (\Throwable $e) {
+                    $this->logger->warning(
+                        'No se pudo iniciar la consola en hilo aparte: '
+                        . $e->getMessage()
+                    );
+                }
+            } elseif ($mode === 'threaded') {
+                $this->logger->warning(
+                    'console: threaded pedido pero la extension pthreads '
+                    . 'no esta cargada en este PHP'
+                );
+            }
+
+            if ($mode === 'threaded') {
+                return null;
+            }
+        }
+
+        if ($tryStdin) {
+            $stdin = new StdinReader();
+            if ($stdin->isOpen()) {
+                return $stdin;
+            }
+
+            if ($mode === 'stdin') {
+                $this->logger->warning(
+                    'console: stdin pedido pero no se pudo abrir stdin '
+                    . 'en modo no bloqueante'
+                );
+                return null;
+            }
+        }
+
+        if ($tryProcess) {
+            $process = new ProcessReader($this->logger);
+            if ($process->isOpen()) {
+                return $process;
+            }
+        }
+
+        return null;
+    }
+
     public function tick()
     {
         if ($this->reader === null) {
@@ -57,11 +135,7 @@ class Console
         }
 
         for ($i = 0; $i < self::MAX_LINES_PER_TICK; $i++) {
-            if (!$this->reader->hasLine()) {
-                return;
-            }
-
-            $line = $this->reader->getLine();
+            $line = $this->reader->readLine();
 
             if ($line === null) {
                 return;
@@ -119,7 +193,7 @@ class Console
     public function close()
     {
         if ($this->reader !== null) {
-            $this->reader->shutdown();
+            $this->reader->close();
             $this->reader = null;
         }
 

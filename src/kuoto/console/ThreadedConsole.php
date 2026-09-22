@@ -2,7 +2,7 @@
 
 namespace kuoto\console;
 
-class ThreadedConsole extends \Thread
+class ThreadedConsole extends \Thread implements ConsoleReader
 {
     private $lines;
     private $running = true;
@@ -52,8 +52,29 @@ class ThreadedConsole extends \Thread
         return $this->lines->shift();
     }
 
+    /**
+     * ConsoleReader::readLine() -- delega en getLine() para que Console
+     * pueda tratar cualquier lector (con o sin pthreads) de forma uniforme.
+     */
+    public function readLine()
+    {
+        return $this->getLine();
+    }
+
+    /** ConsoleReader::isOpen() */
+    public function isOpen()
+    {
+        return $this->running;
+    }
+
     public function shutdown()
     {
         $this->running = false;
+    }
+
+    /** ConsoleReader::close() */
+    public function close()
+    {
+        $this->shutdown();
     }
 }

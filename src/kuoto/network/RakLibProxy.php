@@ -72,6 +72,19 @@ class RakLibProxy
     const RECEIVED_WINDOW_KEEP = 2048;
     const RECOVERY_QUEUE_MAX = 2048;
 
+    // Deteccion de sesiones muertas (ver tick()). Antes era puramente pasiva
+    // (solo se refrescaba lastActivity si llegaba algo del cliente), lo que
+    // expulsaba por "timeout" a jugadores AFK reales cuyo cliente no generaba
+    // trafico propio dentro de la ventana -- independientemente de a que
+    // backend estuvieran conectados, porque este proxy es el unico front-end
+    // UDP compartido por todos los servers. Ahora, ademas de dar mas margen
+    // pasivo, el proxy manda un ping activo (ver maybeSendKeepalive()) que
+    // fuerza un ACK a nivel de RakNet en cualquier cliente que siga vivo,
+    // sin depender de que el propio cliente decida hablar primero.
+    const SESSION_IDLE_TIMEOUT = 300;
+    const KEEPALIVE_AFTER_IDLE = 20;
+    const KEEPALIVE_MIN_INTERVAL = 10;
+
     // Reliability constants
     const UNRELIABLE = 0;
     const UNRELIABLE_SEQUENCED = 1;
@@ -191,8 +204,8 @@ class RakLibProxy
 
         // Cleanup old sessions
         $now = microtime(true);
-        foreach ($this->sessions as $key => $sess) {
-            if ($now - $sess['lastActivity'] > 60) {
+        foreach ($this->sessions as $key => &$sess) {
+            if ($now - $sess['lastActivity'] > self::SESSION_IDLE_TIMEOUT) {
                 $this->logger->info("Sesion expirada: {$key}");
                 // Mirror handlePlayerDisconnect(): a session can go idle without the
                 // client ever sending an explicit CLIENT_DISCONNECT (0x15) -- e.g. it
@@ -203,8 +216,21 @@ class RakLibProxy
                     $this->manager->unregisterPlayer($sess['uuidHex']);
                 }
                 unset($this->sessions[$key]);
+                continue;
             }
+
+            // Keepalive activo: si el cliente lleva un rato sin generar trafico
+            // propio (tipico de un jugador AFK real, o de un cliente que reduce
+            // su propio ping mientras esta en background), no esperamos a que
+            // hable el solo -- le mandamos un paquete RELIABLE. Cualquier stack
+            // RakNet vivo esta obligado a ACKearlo a nivel de protocolo aunque
+            // el contenido no signifique nada para el juego, y ese ACK entrante
+            // refresca lastActivity via handleAck(). Asi solo llegan al timeout
+            // de arriba las sesiones realmente muertas (socket cerrado, cliente
+            // colgado, red caida), no los jugadores simplemente inactivos.
+            $this->maybeSendKeepalive($sess, $now);
         }
+        unset($sess);
 
         // Expire stuck "waiting for backend" logins. A normal PlayerLogin -> backend
         // response round trip is near-instant; if it's been more than a few seconds,

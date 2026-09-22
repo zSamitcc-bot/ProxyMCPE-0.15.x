@@ -12,6 +12,43 @@ namespace kuoto\network\raklibproxy;
  */
 trait SendTrait
 {
+    /**
+     * Nudge an idle-but-connected session so its RakNet stack has to ACK
+     * something, refreshing lastActivity without waiting for the client to
+     * originate traffic on its own (see the comment above the call site in
+     * RakLibProxy::tick()).
+     *
+     * Only fires for fully connected sessions, is throttled so it doesn't
+     * spam a reliable packet every single proxy tick, and is harmless even
+     * if the receiving end forwards the 1-byte payload up to the backend as
+     * "game data" -- it isn't a valid MCPE packet ID a real client sends, so
+     * it's simply ignored there.
+     */
+    private function maybeSendKeepalive(&$session, $now)
+    {
+        if (!isset($session['state']) || $session['state'] !== self::STATE_CONNECTED) {
+            return;
+        }
+
+        if ($now - $session['lastActivity'] < self::KEEPALIVE_AFTER_IDLE) {
+            return;
+        }
+
+        if (isset($session['lastKeepaliveSent']) && ($now - $session['lastKeepaliveSent']) < self::KEEPALIVE_MIN_INTERVAL) {
+            return;
+        }
+
+        $session['lastKeepaliveSent'] = $now;
+
+        // Raw RakNet CONNECTED_PING (0x00) + a ping id -- if the client speaks
+        // real RakNet it'll reply with CONNECTED_PONG on its own, but what we
+        // actually rely on here is reliability: RELIABLE forces the client's
+        // RakNet layer to ACK this datagram's sequence number regardless of
+        // whether it understands the payload.
+        $ping = chr(0x00) . $this->packLong((int) ($now * 1000));
+        $this->sendEncapsulated($session, $ping, self::RELIABLE);
+    }
+
     private function sendEncapsulated(&$session, $buffer, $reliability = self::RELIABLE_ORDERED)
     {
         if (strlen($buffer) === 0) return;
